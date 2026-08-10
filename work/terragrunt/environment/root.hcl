@@ -9,8 +9,6 @@ locals {
   user              = local.account_vars.locals.user
   role              = local.account_vars.locals.role
   private_key       = local.account_vars.locals.private_key
-
-  # CONFIGURATION FIX: Reverted back to your exact account.hcl variable key name
   private_key_pass  = local.account_vars.locals.private_key_pass
 }
 
@@ -39,6 +37,7 @@ EOF
 }
 
 #Uncomment and configure for a remote statefile on an s3 bucket
+#Make sure to intialize your client: aws sso login
 #remote_state {
 #  backend = "s3"
 #  generate = {
@@ -49,11 +48,14 @@ EOF
 #    bucket = "my-snowflake-tf-state-bucket"
 #    key    = "$${path_relative_to_include()}/terraform.tfstate"
 #    region = "us-east-1"
+#    encrypt        = true
+#    dynamodb_table = "your-lock-table-name"
 #  }
 #}
 
 
 #Uncomment and configure for a remote statefile on a gcp bucket
+#Make sure you initialize your client: gcloud auth application-default login
 #remote_state {
 #  backend = "gcs"  
 #  generate = {
@@ -70,6 +72,7 @@ EOF
 
 
 #Uncomment and configure for a remote statefile on an azure bucket
+#Make sure you initialize your client: az login
 #remote_state {
 #  backend = "azurerm"  
 #  generate = {
