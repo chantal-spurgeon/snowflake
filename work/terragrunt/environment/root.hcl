@@ -38,6 +38,7 @@ provider "snowflake" {
 EOF
 }
 
+#Uncomment and configure for a remote statefile on an s3 bucket
 #remote_state {
 #  backend = "s3"
 #  generate = {
@@ -48,6 +49,51 @@ EOF
 #    bucket = "my-snowflake-tf-state-bucket"
 #    key    = "$${path_relative_to_include()}/terraform.tfstate"
 #    region = "us-east-1"
+#  }
+#}
+
+
+#Uncomment and configure for a remote statefile on a gcp bucket
+#remote_state {
+#  backend = "gcs"  
+#  generate = {
+#    path      = "backend.tf"
+#    if_exists = "overwrite_terragrunt"
+#  }
+#  config = {
+#    project  = "your-gcp-project-id"
+#    location = "us-central1"
+#    bucket   = "your-unique-gcs-bucket-name"
+#    prefix   = "${path_relative_to_include()}"
+#  }
+#}
+
+
+#Uncomment and configure for a remote statefile on an azure bucket
+#remote_state {
+#  backend = "azurerm"  
+#  generate = {
+#    path      = "backend.tf"
+#    if_exists = "overwrite_terragrunt"
+#  }
+#  config = {
+#    resource_group_name  = "your-resource-group-name"
+#    storage_account_name = "youruniquestorageaccount" # Must be globally unique, 3-24 lowercase letters/numbers
+#    container_name       = "terraform-state-container"
+#    key                  = "${path_relative_to_include()}/terraform.tfstate"
+#  }
+#}
+
+
+#Uncomment and configure for a local statefile
+#remote_state {
+#  backend = "local" 
+#  generate = {
+#    path      = "backend.tf"
+#    if_exists = "overwrite_terragrunt"
+#  }
+#  config = {
+#    path = "${get_terragrunt_dir()}/terraform.tfstate"
 #  }
 #}
 
