@@ -13,7 +13,7 @@ terraform {
 # Inject your warehouses configuration directly into the inputs block
 inputs = {
   warehouses = {
-    "producer8_wh" = {
+    "producer_wh" = {
       warehouse_size      = "XSMALL"
       auto_suspend        = 10
       auto_resume         = true
@@ -24,7 +24,7 @@ inputs = {
       max_cluster_count   = 1
     }
 
-    "reporting8_wh" = {
+    "reporting_wh" = {
       warehouse_size      = "SMALL"
       auto_suspend        = 120
       auto_resume         = true
@@ -36,7 +36,7 @@ inputs = {
       scaling_policy      = "STANDARD"
     }
 
-    "snowpark8_wh" = {
+    "snowpark_wh" = {
       warehouse_size      = "LARGE"
       auto_suspend        = 60
       auto_resume         = true
