@@ -10,7 +10,7 @@ terraform {
 
 inputs = {
   databases = {
-    "db_stray_kids8" = {
+    "db_stray_kids" = {
       comment                  = "Production chaos."
       data_retention_time_days = 1
       is_transient            = true
