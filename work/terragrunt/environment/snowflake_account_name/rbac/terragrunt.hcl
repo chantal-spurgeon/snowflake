@@ -16,7 +16,7 @@ inputs = {
   account_roles = {
     "SYSADMIN" = {
       comment               = "Native Snowflake system administrator role"
-      granted_roles         = ["PRODUCER8", "SECURITY_ADMIN_CUSTOM8"]
+      granted_roles         = ["PRODUCER", "SECURITY_ADMIN_CUSTOM"]
       granted_users         = []
       warehouse_privileges        = {}
       integration_privileges      = {}
@@ -36,39 +36,39 @@ inputs = {
       future_stage_privileges     = {}
     },
 
-    "PRODUCER8" = {
+    "PRODUCER" = {
       comment       = "Role for 3RACHA"
       granted_roles = []
-      granted_users = ["BANGCHAN8"]
+      granted_users = ["BANGCHAN"]
 
-      warehouse_privileges   = { "PRODUCER8_WH" = ["USAGE", "OPERATE", "MONITOR"] }
-      integration_privileges = { "AWS_S3_DATA_LAKE8" = ["USAGE"] }
-      database_privileges    = { "DB_STRAY_KIDS8" = ["USAGE"] }
+      warehouse_privileges   = { "PRODUCER_WH" = ["USAGE", "OPERATE", "MONITOR"] }
+      integration_privileges = { "AWS_S3_DATA_LAKE" = ["USAGE"] }
+      database_privileges    = { "DB_STRAY_KIDS" = ["USAGE"] }
 
       schema_privileges = {
-        "DB_STRAY_KIDS8.CHANS_LAPTOP" = ["OWNERSHIP", "USAGE"],
-        "DB_STRAY_KIDS8.COMEBACKS"    = ["USAGE", "MODIFY", "CREATE TABLE"],
+        "DB_STRAY_KIDS.CHANS_LAPTOP" = ["OWNERSHIP", "USAGE"],
+        "DB_STRAY_KIDS.COMEBACKS"    = ["USAGE", "MODIFY", "CREATE TABLE"],
       }
 
-      all_table_privileges     = { "DB_STRAY_KIDS8.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      all_view_privileges      = { "DB_STRAY_KIDS8.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      all_procedure_privileges = { "DB_STRAY_KIDS8.COMEBACKS" = ["USAGE"] }
-      all_function_privileges  = { "DB_STRAY_KIDS8.COMEBACKS" = ["USAGE"] }
-      all_task_privileges      = { "DB_STRAY_KIDS8.COMEBACKS" = ["OWNERSHIP"] }
-      all_stage_privileges     = { "DB_STRAY_KIDS8.COMEBACKS" = ["READ", "WRITE"] }
+      all_table_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      all_view_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      all_procedure_privileges = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
+      all_function_privileges  = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
+      all_task_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["OWNERSHIP"] }
+      all_stage_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["READ", "WRITE"] }
 
-      future_table_privileges     = { "DB_STRAY_KIDS8.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      future_view_privileges      = { "DB_STRAY_KIDS8.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      future_procedure_privileges = { "DB_STRAY_KIDS8.COMEBACKS" = ["USAGE"] }
-      future_function_privileges  = { "DB_STRAY_KIDS8.COMEBACKS" = ["USAGE"] }
-      future_task_privileges      = { "DB_STRAY_KIDS8.COMEBACKS" = ["OWNERSHIP"] }
-      future_stage_privileges     = { "DB_STRAY_KIDS8.COMEBACKS" = ["READ", "WRITE"] }
+      future_table_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      future_view_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      future_procedure_privileges = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
+      future_function_privileges  = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
+      future_task_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["OWNERSHIP"] }
+      future_stage_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["READ", "WRITE"] }
     },
 
-    "SECURITY_ADMIN_CUSTOM8" = {
+    "SECURITY_ADMIN_CUSTOM" = {
       comment       = "Custom operational role designed to monitor security metrics"
       granted_roles = ["SECURITYADMIN"]
-      granted_users = ["BANGCHAN8"]
+      granted_users = ["BANGCHAN"]
       warehouse_privileges        = {}
       integration_privileges      = {}
       database_privileges         = {}
