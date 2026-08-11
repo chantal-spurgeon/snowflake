@@ -10,15 +10,15 @@ terraform {
 
 inputs = {
   users = {
-    "bangchan8" = {
-      login_name              = "bang.chan8@jype.com"
+    "bangchan" = {
+      login_name              = "bang.chan@jype.com"
       email                   = "bang.chan@jype.com"
       first_name              = "Christopher"
       last_name               = "Bahng"
-      default_role            = "PRODUCER8"
+      default_role            = "PRODUCER"
       default_secondary_roles = ["\"ALL\""]
-      default_warehouse       = "PRODUCER8_WH"
-      default_namespace       = "DB_STRAY_KIDS8.CHANS_LAPTOP"
+      default_warehouse       = "PRODUCER_WH"
+      default_namespace       = "DB_STRAY_KIDS.CHANS_LAPTOP"
       network_policy          = null
       user_type               = "PERSON"
       comment                 = "Leader of Stray Kids"
@@ -29,13 +29,13 @@ inputs = {
       rsa_public_key_2        = null
     }
 
-    "stray_kids_admin8" = {
-      login_name              = "stray_kids_admin8"
+    "stray_kids_admin" = {
+      login_name              = "stray_kids_admin"
       email                   = "devops-notify@jype.com"
-      default_role            = "PRODUCER8"
+      default_role            = "PRODUCER"
       default_secondary_roles = ["\"ALL\""]
-      default_warehouse       = "PRODUCER8_WH"
-      default_namespace       = "DB_STRAY_KIDS8.CHANS_LAPTOP"
+      default_warehouse       = "PRODUCER_WH"
+      default_namespace       = "DB_STRAY_KIDS.CHANS_LAPTOP"
       network_policy          = "CORPORATE_VPN_ONLY"
       user_type               = "SERVICE"
       comment                 = "Stray Kids Service Account"
