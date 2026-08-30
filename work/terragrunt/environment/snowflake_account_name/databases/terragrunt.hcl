@@ -10,18 +10,18 @@ terraform {
 
 inputs = {
   databases = {
-    "db_stray_kids" = {
+    "db_test_prd" = {
       comment                  = "Production chaos."
       data_retention_time_days = 1
       is_transient            = true
 
       schemas = {
-        "chans_laptop" = {
-          comment        = "The area we all want to see but never will"
+        "ingest_data" = {
+          comment        = "Raw Data"
           is_transient   = true
           managed_access = false
         },
-        "comebacks" = {
+        "share_ready" = {
           comment        = "The final product we love"
           is_transient   = true
           managed_access = true
@@ -29,7 +29,7 @@ inputs = {
       }
     },
 
-#    "db_stray_kids_replica" = {
+#    "db_test_prd_replica" = {
 #      comment                  = "Disaster Recovery Archive."
 #      data_retention_time_days = 1
 #      is_transient            = true
