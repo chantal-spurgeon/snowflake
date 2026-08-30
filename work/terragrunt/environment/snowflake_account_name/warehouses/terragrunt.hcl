@@ -13,12 +13,12 @@ terraform {
 # Inject your warehouses configuration directly into the inputs block
 inputs = {
   warehouses = {
-    "producer_wh" = {
+    "test_prd_wh" = {
       warehouse_size      = "XSMALL"
       auto_suspend        = 10
       auto_resume         = true
       initially_suspended = true
-      comment             = "3RACHA Warehouse"
+      comment             = "INGEST Warehouse"
       warehouse_type      = "STANDARD"
       min_cluster_count   = 1
       max_cluster_count   = 1
