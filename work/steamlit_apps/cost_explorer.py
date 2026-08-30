@@ -213,16 +213,52 @@ def generate_mock_data(start_date, end_date, seed=42):
                     "MODEL_NAME": model,
                     "TOKENS": tokens,
                     "CREDITS": credits,
+                    "SOURCE": "Cortex AI Functions",
                 }
             )
+        # Cortex Code ("CoCo") usage across CLI / Snowsight / Desktop — no
+        # warehouse or query tag concept, but does have user/role.
+        for source_label, n_range in [
+            ("Cortex Code (CLI)", (5, 20)),
+            ("Cortex Code (Snowsight)", (3, 15)),
+            ("Cortex Code (Desktop)", (1, 8)),
+        ]:
+            for _ in range(rng.integers(*n_range)):
+                credits = abs(rng.normal(0.015, 0.01))
+                tokens = int(abs(rng.normal(2000, 1000)))
+                cortex_rows.append(
+                    {
+                        "DATE": d,
+                        "WAREHOUSE_NAME": None,
+                        "USER_NAME": rng.choice(users),
+                        "QUERY_TAG": None,
+                        "ROLE_NAME": rng.choice(roles),
+                        "FUNCTION_NAME": source_label,
+                        "MODEL_NAME": None,
+                        "TOKENS": tokens,
+                        "CREDITS": credits,
+                        "SOURCE": source_label,
+                    }
+                )
     cortex_df = pd.DataFrame(cortex_rows)
 
-    # Storage (roughly steady, slow growth)
+
+    # Storage (roughly steady, slow growth), split into regular (active table
+    # + stage bytes) and Fail-safe (recently deleted data still billed during
+    # the Fail-safe retention window — typically ~7-10% of active storage).
     storage_rows = []
     base_tb = 40
     for i, d in enumerate(days):
-        tb = base_tb + i * 0.05 + rng.normal(0, 0.3)
-        storage_rows.append({"DATE": d, "STORAGE_TB": max(tb, 0)})
+        active_tb = max(base_tb + i * 0.05 + rng.normal(0, 0.3), 0)
+        failsafe_tb = max(active_tb * 0.08 + rng.normal(0, 0.5), 0)
+        storage_rows.append(
+            {
+                "DATE": d,
+                "ACTIVE_TB": active_tb,
+                "FAILSAFE_TB": failsafe_tb,
+                "STORAGE_TB": active_tb + failsafe_tb,
+            }
+        )
     storage_df = pd.DataFrame(storage_rows)
 
     # Replication
@@ -238,28 +274,33 @@ def generate_mock_data(start_date, end_date, seed=42):
     ]
     egress_df = pd.DataFrame(egress_rows)
 
-    # Service-type breakdown (METERING_DAILY_HISTORY style). WAREHOUSE_METERING
-    # here mirrors compute_df's totals (same underlying credits); the other
-    # service types represent "serverless" compute-adjacent features that
-    # aren't captured by WAREHOUSE_METERING_HISTORY at all.
+    # Service-type breakdown (METERING_DAILY_HISTORY style). This view has no
+    # per-object NAME column — it's SERVICE_TYPE totals for the whole account,
+    # per day. WAREHOUSE_METERING here mirrors compute_df's totals summed
+    # across all warehouses; the other service types represent "serverless"
+    # compute-adjacent features that aren't captured by
+    # WAREHOUSE_METERING_HISTORY at all. CORTEX_CODE_* represents Cortex Code
+    # ("CoCo") usage across the CLI/Desktop/Snowsight surfaces.
     service_type_rows = []
     for d in days:
-        for wh in warehouses:
-            base = {"ETL_WH": 12, "BI_WH": 8, "ADHOC_WH": 4, "DS_WH": 6, "LOAD_WH": 5}[wh]
-            credits = max(0, rng.normal(base, base * 0.25))
-            service_type_rows.append(
-                {"DATE": d, "SERVICE_TYPE": "WAREHOUSE_METERING", "NAME": wh, "CREDITS": credits}
-            )
+        wh_total = sum(
+            max(0, rng.normal(base, base * 0.25))
+            for base in {"ETL_WH": 12, "BI_WH": 8, "ADHOC_WH": 4, "DS_WH": 6, "LOAD_WH": 5}.values()
+        )
+        service_type_rows.append({"DATE": d, "SERVICE_TYPE": "WAREHOUSE_METERING", "CREDITS": wh_total})
         serverless_services = {
             "AUTOMATIC_CLUSTERING": 1.2,
             "MATERIALIZED_VIEW": 0.6,
             "SEARCH_OPTIMIZATION": 0.8,
             "QUERY_ACCELERATION": 0.4,
             "SNOWPIPE": 0.5,
+            "CORTEX_CODE_SNOWSIGHT": 0.9,
+            "CORTEX_CODE_CLI": 0.7,
+            "CORTEX_CODE_DESKTOP": 0.3,
         }
         for svc, base in serverless_services.items():
             credits = max(0, rng.normal(base, base * 0.4))
-            service_type_rows.append({"DATE": d, "SERVICE_TYPE": svc, "NAME": None, "CREDITS": credits})
+            service_type_rows.append({"DATE": d, "SERVICE_TYPE": svc, "CREDITS": credits})
     service_type_df = pd.DataFrame(service_type_rows)
 
     return {
@@ -270,6 +311,7 @@ def generate_mock_data(start_date, end_date, seed=42):
         "replication": repl_df,
         "egress": egress_df,
         "service_type": service_type_df,
+        "_diagnostics": [],
     }
 
 
@@ -278,6 +320,7 @@ def generate_mock_data(start_date, end_date, seed=42):
 # --------------------------------------------------------------------------
 def load_live_data(conn, start_date, end_date):
     params = [start_date, end_date]
+    diagnostics = []  # list of (label, error_text) for any query that failed
 
     compute_sql = """
         SELECT
@@ -303,16 +346,19 @@ def load_live_data(conn, start_date, end_date):
     """
     query_df = cached_query(conn, query_sql, params, cache_key=("query", start_date, end_date))
 
-    cortex_df = load_cortex_usage(conn, start_date, end_date)
+    cortex_df = load_cortex_usage(conn, start_date, end_date, diagnostics)
 
     storage_sql = """
         SELECT
             USAGE_DATE AS DATE,
-            (STORAGE_BYTES + STAGE_BYTES + FAILSAFE_BYTES) / POWER(1024, 4) AS STORAGE_TB
+            (STORAGE_BYTES + STAGE_BYTES) / POWER(1024, 4) AS ACTIVE_TB,
+            FAILSAFE_BYTES / POWER(1024, 4) AS FAILSAFE_TB
         FROM SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE
         WHERE USAGE_DATE BETWEEN ? AND ?
     """
     storage_df = cached_query(conn, storage_sql, params, cache_key=("storage", start_date, end_date))
+    if not storage_df.empty:
+        storage_df["STORAGE_TB"] = storage_df["ACTIVE_TB"] + storage_df["FAILSAFE_TB"]
 
     repl_sql = """
         SELECT
@@ -339,16 +385,16 @@ def load_live_data(conn, start_date, end_date):
         SELECT
             DATE_TRUNC('day', USAGE_DATE) AS DATE,
             SERVICE_TYPE,
-            NAME,
             SUM(CREDITS_USED) AS CREDITS
         FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
         WHERE USAGE_DATE BETWEEN ? AND ?
-        GROUP BY 1, 2, 3
+        GROUP BY 1, 2
     """
     try:
         service_type_df = cached_query(conn, service_type_sql, params, cache_key=("service_type", start_date, end_date))
-    except Exception:
-        service_type_df = pd.DataFrame(columns=["DATE", "SERVICE_TYPE", "NAME", "CREDITS"])
+    except Exception as e:
+        diagnostics.append(("Compute by service type (METERING_DAILY_HISTORY)", str(e)))
+        service_type_df = pd.DataFrame(columns=["DATE", "SERVICE_TYPE", "CREDITS"])
 
     return {
         "compute": compute_df,
@@ -358,14 +404,20 @@ def load_live_data(conn, start_date, end_date):
         "replication": repl_df,
         "egress": egress_df,
         "service_type": service_type_df,
+        "_diagnostics": diagnostics,
     }
 
 
-def load_cortex_usage(conn, start_date, end_date):
+def load_cortex_usage(conn, start_date, end_date, diagnostics):
     """Pull Cortex AI credit usage from Snowflake's dedicated Account Usage
     views. Prefers the current, most granular views and falls back gracefully
     for accounts where a given view isn't available yet (e.g. older Snowflake
     releases, or before a view's GA date).
+
+    Any query failure is appended to `diagnostics` as (label, error_text)
+    instead of being silently swallowed, so the app can surface the real
+    reason (permissions, missing view, bad SQL) instead of just showing
+    "no data" with no explanation.
 
     Column names below are verified against Snowflake's Account Usage
     reference docs (each view has a genuinely different schema — they are
@@ -410,7 +462,8 @@ def load_cortex_usage(conn, start_date, end_date):
         df = cached_query(conn, ai_functions_sql, params, cache_key=("cortex_ai_fn", start_date, end_date))
         df["SOURCE"] = "Cortex AI Functions"
         frames.append(df)
-    except Exception:
+    except Exception as e:
+        diagnostics.append(("Cortex AI Functions (CORTEX_AI_FUNCTIONS_USAGE_HISTORY)", str(e)))
         # Fall back to the deprecated view for older accounts — note this
         # view is no longer updated by Snowflake, so it won't show recent usage.
         try:
@@ -432,8 +485,8 @@ def load_cortex_usage(conn, start_date, end_date):
             df = cached_query(conn, legacy_sql, params, cache_key=("cortex_legacy", start_date, end_date))
             df["SOURCE"] = "Cortex Functions (legacy view)"
             frames.append(df)
-        except Exception:
-            pass
+        except Exception as e2:
+            diagnostics.append(("Cortex Functions legacy fallback (CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY)", str(e2)))
 
     analyst_sql = """
         SELECT
@@ -453,8 +506,8 @@ def load_cortex_usage(conn, start_date, end_date):
         df = cached_query(conn, analyst_sql, params, cache_key=("cortex_analyst", start_date, end_date))
         df["SOURCE"] = "Cortex Analyst"
         frames.append(df)
-    except Exception:
-        pass
+    except Exception as e:
+        diagnostics.append(("Cortex Analyst (CORTEX_ANALYST_USAGE_HISTORY)", str(e)))
 
     agent_sql = """
         SELECT
@@ -474,8 +527,40 @@ def load_cortex_usage(conn, start_date, end_date):
         df = cached_query(conn, agent_sql, params, cache_key=("cortex_agent", start_date, end_date))
         df["SOURCE"] = "Cortex Agents"
         frames.append(df)
-    except Exception:
-        pass
+    except Exception as e:
+        diagnostics.append(("Cortex Agents (CORTEX_AGENT_USAGE_HISTORY)", str(e)))
+
+    # Cortex Code ("CoCo") — CLI, Snowsight, and Desktop each have their own
+    # view with an identical schema. Role name is nested at METADATA:role_name;
+    # there's no warehouse or query tag concept for these (interactive coding
+    # assistant usage, not warehouse-run queries).
+    coco_views = [
+        ("CORTEX_CODE_CLI_USAGE_HISTORY", "Cortex Code (CLI)"),
+        ("CORTEX_CODE_SNOWSIGHT_USAGE_HISTORY", "Cortex Code (Snowsight)"),
+        ("CORTEX_CODE_DESKTOP_USAGE_HISTORY", "Cortex Code (Desktop)"),
+    ]
+    for view_name, source_label in coco_views:
+        coco_sql = f"""
+            SELECT
+                DATE_TRUNC('day', USAGE_TIME) AS DATE,
+                NULL AS WAREHOUSE_NAME,
+                USER_NAME,
+                NULL AS QUERY_TAG,
+                METADATA:role_name::STRING AS ROLE_NAME,
+                '{source_label}' AS FUNCTION_NAME,
+                NULL AS MODEL_NAME,
+                SUM(TOKENS) AS TOKENS,
+                SUM(TOKEN_CREDITS) AS CREDITS
+            FROM SNOWFLAKE.ACCOUNT_USAGE.{view_name}
+            WHERE USAGE_TIME::DATE BETWEEN ? AND ?
+            GROUP BY 1, 2, 3, 5
+        """
+        try:
+            df = cached_query(conn, coco_sql, params, cache_key=(view_name.lower(), start_date, end_date))
+            df["SOURCE"] = source_label
+            frames.append(df)
+        except Exception as e:
+            diagnostics.append((f"{source_label} ({view_name})", str(e)))
 
     if not frames:
         return pd.DataFrame(
@@ -673,6 +758,20 @@ else:
         st.sidebar.error(f"Query failed, falling back to demo data: {e}")
         raw_data = generate_mock_data(start_date, end_date)
 
+_diagnostics = raw_data.get("_diagnostics", [])
+if _diagnostics:
+    with st.expander(f"⚠️ {len(_diagnostics)} data source issue(s) — click for details", expanded=True):
+        st.caption(
+            "The sections below are showing partial or no data for these sources. "
+            "Common causes: the running role lacks SELECT on the view (grant "
+            "`IMPORTED PRIVILEGES` on the `SNOWFLAKE` database, or a more specific "
+            "grant on the view itself), the view doesn't exist yet on this Snowflake "
+            "release/region, or there's a genuine SQL error below."
+        )
+        for label, error_text in _diagnostics:
+            st.markdown(f"**{label}**")
+            st.code(error_text, language=None)
+
 query_df = raw_data["query"]
 
 # --------------------------------------------------------------------------
@@ -793,7 +892,9 @@ show_service_breakdown = st.checkbox(
     value=False,
     help="Sources SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY — includes warehouse "
     "compute plus serverless features like Automatic Clustering, Search Optimization, "
-    "Materialized View maintenance, Query Acceleration, and Snowpipe.",
+    "Materialized View maintenance, Query Acceleration, Snowpipe, and Cortex Code (CoCo). "
+    "This view reports account-wide totals per service type — it can't be filtered by "
+    "warehouse, user, tag, or role.",
 )
 
 if show_service_breakdown:
@@ -802,13 +903,6 @@ if show_service_breakdown:
     if service_df.empty:
         st.info("No service-type usage data available for this period/account.")
     else:
-        # Warehouse filter only applies to WAREHOUSE_METERING rows (the only
-        # service type attributable to a specific warehouse via NAME); other
-        # service types aren't warehouse-scoped, so they're left unfiltered.
-        if sel_warehouses:
-            is_wh_row = service_df["SERVICE_TYPE"] == "WAREHOUSE_METERING"
-            service_df = service_df[~is_wh_row | (is_wh_row & service_df["NAME"].isin(sel_warehouses))]
-
         type_opts = sorted(service_df["SERVICE_TYPE"].dropna().unique().tolist())
         selected_types = st.multiselect("Service types to include", type_opts, default=type_opts)
         service_df = service_df[service_df["SERVICE_TYPE"].isin(selected_types)]
@@ -848,6 +942,68 @@ if show_service_breakdown:
                 "serverless features like clustering and search optimization aren't captured "
                 "in the top-level Compute total or the Cost deep-dive section below."
             )
+
+st.markdown("---")
+
+# --------------------------------------------------------------------------
+# Storage breakdown: regular vs Fail-safe
+# --------------------------------------------------------------------------
+st.subheader("🗄️ Storage breakdown — regular vs Fail-safe")
+
+show_storage_breakdown = st.checkbox(
+    "Break down storage by regular vs Fail-safe",
+    value=False,
+    help="Sources SNOWFLAKE.ACCOUNT_USAGE.STORAGE_USAGE — splits billable storage into "
+    "regular (active table + stage bytes) and Fail-safe (recently deleted data still "
+    "billed during the account's Fail-safe retention window). Both are billed at the "
+    "same per-TB storage rate.",
+)
+
+if show_storage_breakdown:
+    storage_bd_df = raw_data.get("storage", pd.DataFrame()).copy()
+
+    if storage_bd_df.empty or "ACTIVE_TB" not in storage_bd_df.columns:
+        st.info("No storage breakdown data available for this period/account.")
+    else:
+        melted = storage_bd_df.melt(
+            id_vars=["DATE"],
+            value_vars=["ACTIVE_TB", "FAILSAFE_TB"],
+            var_name="STORAGE_TYPE",
+            value_name="TB",
+        )
+        melted["STORAGE_TYPE"] = melted["STORAGE_TYPE"].map(
+            {"ACTIVE_TB": "Regular", "FAILSAFE_TB": "Fail-safe"}
+        )
+        melted["COST_USD"] = melted["TB"] * (pricing.storage_price_per_tb / 30.0)
+
+        t1, t2 = st.columns([1, 1.4])
+        with t1:
+            pie_df = melted.groupby("STORAGE_TYPE", as_index=False)["COST_USD"].sum()
+            fig = px.pie(pie_df, names="STORAGE_TYPE", values="COST_USD", hole=0.45)
+            fig.update_traces(textinfo="percent+label")
+            st.plotly_chart(fig, use_container_width=True)
+        with t2:
+            fig = px.bar(melted, x="DATE", y="TB", color="STORAGE_TYPE")
+            fig.update_layout(barmode="stack", xaxis_title=None, yaxis_title="Storage (TB)")
+            st.plotly_chart(fig, use_container_width=True)
+
+        table = (
+            melted.groupby("STORAGE_TYPE", as_index=False)
+            .agg(AVG_TB=("TB", "mean"), COST_USD=("COST_USD", "sum"))
+            .sort_values("COST_USD", ascending=False)
+        )
+        st.dataframe(
+            table.rename(columns={"STORAGE_TYPE": "Storage Type", "AVG_TB": "Avg. TB/day", "COST_USD": "Est. Cost ($)"}),
+            use_container_width=True,
+            hide_index=True,
+        )
+
+        st.caption(
+            "Regular and Fail-safe storage are billed at the same per-TB rate — this view "
+            "just separates how much of your storage bill is recently deleted data still "
+            "being retained (Fail-safe, typically a 7-day window after Time Travel expires) "
+            "versus active data and stage files."
+        )
 
 st.markdown("---")
 
