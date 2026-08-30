@@ -238,6 +238,30 @@ def generate_mock_data(start_date, end_date, seed=42):
     ]
     egress_df = pd.DataFrame(egress_rows)
 
+    # Service-type breakdown (METERING_DAILY_HISTORY style). WAREHOUSE_METERING
+    # here mirrors compute_df's totals (same underlying credits); the other
+    # service types represent "serverless" compute-adjacent features that
+    # aren't captured by WAREHOUSE_METERING_HISTORY at all.
+    service_type_rows = []
+    for d in days:
+        for wh in warehouses:
+            base = {"ETL_WH": 12, "BI_WH": 8, "ADHOC_WH": 4, "DS_WH": 6, "LOAD_WH": 5}[wh]
+            credits = max(0, rng.normal(base, base * 0.25))
+            service_type_rows.append(
+                {"DATE": d, "SERVICE_TYPE": "WAREHOUSE_METERING", "NAME": wh, "CREDITS": credits}
+            )
+        serverless_services = {
+            "AUTOMATIC_CLUSTERING": 1.2,
+            "MATERIALIZED_VIEW": 0.6,
+            "SEARCH_OPTIMIZATION": 0.8,
+            "QUERY_ACCELERATION": 0.4,
+            "SNOWPIPE": 0.5,
+        }
+        for svc, base in serverless_services.items():
+            credits = max(0, rng.normal(base, base * 0.4))
+            service_type_rows.append({"DATE": d, "SERVICE_TYPE": svc, "NAME": None, "CREDITS": credits})
+    service_type_df = pd.DataFrame(service_type_rows)
+
     return {
         "compute": compute_df,
         "query": query_df,
@@ -245,6 +269,7 @@ def generate_mock_data(start_date, end_date, seed=42):
         "storage": storage_df,
         "replication": repl_df,
         "egress": egress_df,
+        "service_type": service_type_df,
     }
 
 
@@ -310,6 +335,21 @@ def load_live_data(conn, start_date, end_date):
     """
     egress_df = cached_query(conn, egress_sql, params, cache_key=("egress", start_date, end_date))
 
+    service_type_sql = """
+        SELECT
+            DATE_TRUNC('day', USAGE_DATE) AS DATE,
+            SERVICE_TYPE,
+            NAME,
+            SUM(CREDITS_USED) AS CREDITS
+        FROM SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY
+        WHERE USAGE_DATE BETWEEN ? AND ?
+        GROUP BY 1, 2, 3
+    """
+    try:
+        service_type_df = cached_query(conn, service_type_sql, params, cache_key=("service_type", start_date, end_date))
+    except Exception:
+        service_type_df = pd.DataFrame(columns=["DATE", "SERVICE_TYPE", "NAME", "CREDITS"])
+
     return {
         "compute": compute_df,
         "query": query_df,
@@ -317,6 +357,7 @@ def load_live_data(conn, start_date, end_date):
         "storage": storage_df,
         "replication": repl_df,
         "egress": egress_df,
+        "service_type": service_type_df,
     }
 
 
@@ -326,16 +367,27 @@ def load_cortex_usage(conn, start_date, end_date):
     for accounts where a given view isn't available yet (e.g. older Snowflake
     releases, or before a view's GA date).
 
-    Views used (see Snowflake docs):
-      - CORTEX_AI_FUNCTIONS_USAGE_HISTORY: current, primary source for
-        Cortex AI Function calls (COMPLETE, TRANSLATE, EMBED_*, etc).
-        User/query tag/role attribution only populated for usage on/after
-        2026-02-16 — earlier rows come back with those fields NULL.
-      - CORTEX_ANALYST_USAGE_HISTORY / CORTEX_AGENT_USAGE_HISTORY: Cortex
-        Analyst and Cortex Agents aren't captured as "functions", so they're
-        pulled separately and unioned in.
-      - CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY: deprecated, used only as a last
-        resort if none of the above are queryable (e.g. very old accounts).
+    Column names below are verified against Snowflake's Account Usage
+    reference docs (each view has a genuinely different schema — they are
+    NOT interchangeable):
+      - CORTEX_AI_FUNCTIONS_USAGE_HISTORY: WAREHOUSE_ID, USER_ID, QUERY_TAG,
+        ROLE_NAMES (an ARRAY — primary role is element [0]), FUNCTION_NAME,
+        MODEL_NAME, CREDITS. Only includes usage on/after 2026-01-05; user/
+        query tag/role attribution only populated for usage on/after
+        2026-02-16 (earlier rows come back with those fields NULL).
+      - CORTEX_ANALYST_USAGE_HISTORY: much sparser schema — just START_TIME,
+        END_TIME, REQUEST_COUNT, CREDITS, USERNAME. No warehouse, query tag,
+        or role at all.
+      - CORTEX_AGENT_USAGE_HISTORY: USER_ID/USER_NAME at top level; role name
+        is nested inside the METADATA object as METADATA:role_name. Credit
+        figure is TOKEN_CREDITS (token-based agent costs only — this
+        excludes METADATA:sql_query_credits, the warehouse compute an agent's
+        SQL tool calls incurred, since that's warehouse cost already counted
+        elsewhere, not Cortex-specific cost).
+      - CORTEX_FUNCTIONS_QUERY_USAGE_HISTORY: deprecated and no longer
+        updated by Snowflake — used only as a last-resort fallback if
+        CORTEX_AI_FUNCTIONS_USAGE_HISTORY isn't queryable at all (e.g. very
+        old accounts), since it won't reflect current usage.
     """
     params = [start_date, end_date]
     frames = []
@@ -346,13 +398,11 @@ def load_cortex_usage(conn, start_date, end_date):
             WAREHOUSE_ID::STRING AS WAREHOUSE_NAME,
             USER_ID::STRING AS USER_NAME,
             QUERY_TAG,
-            ROLE_ID::STRING AS ROLE_NAME,
+            ROLE_NAMES[0]::STRING AS ROLE_NAME,
             FUNCTION_NAME,
             MODEL_NAME,
-            SUM(TRY_CAST(m.value:value::STRING AS FLOAT)) AS TOKENS,
             SUM(CREDITS) AS CREDITS
-        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY,
-             LATERAL FLATTEN(input => metrics) m
+        FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AI_FUNCTIONS_USAGE_HISTORY
         WHERE START_TIME::DATE BETWEEN ? AND ?
         GROUP BY 1, 2, 3, 4, 5, 6, 7
     """
@@ -361,7 +411,8 @@ def load_cortex_usage(conn, start_date, end_date):
         df["SOURCE"] = "Cortex AI Functions"
         frames.append(df)
     except Exception:
-        # Fall back to the deprecated view for older accounts
+        # Fall back to the deprecated view for older accounts — note this
+        # view is no longer updated by Snowflake, so it won't show recent usage.
         try:
             legacy_sql = """
                 SELECT
@@ -387,17 +438,16 @@ def load_cortex_usage(conn, start_date, end_date):
     analyst_sql = """
         SELECT
             DATE_TRUNC('day', START_TIME) AS DATE,
-            WAREHOUSE_ID::STRING AS WAREHOUSE_NAME,
-            USER_ID::STRING AS USER_NAME,
+            NULL AS WAREHOUSE_NAME,
+            USERNAME AS USER_NAME,
             NULL AS QUERY_TAG,
             NULL AS ROLE_NAME,
             'CORTEX_ANALYST' AS FUNCTION_NAME,
             NULL AS MODEL_NAME,
-            NULL AS TOKENS,
             SUM(CREDITS) AS CREDITS
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_ANALYST_USAGE_HISTORY
         WHERE START_TIME::DATE BETWEEN ? AND ?
-        GROUP BY 1, 2, 3
+        GROUP BY 1, 3
     """
     try:
         df = cached_query(conn, analyst_sql, params, cache_key=("cortex_analyst", start_date, end_date))
@@ -409,17 +459,16 @@ def load_cortex_usage(conn, start_date, end_date):
     agent_sql = """
         SELECT
             DATE_TRUNC('day', START_TIME) AS DATE,
-            NULL AS WAREHOUSE_NAME,
-            USER_ID::STRING AS USER_NAME,
+            METADATA:sql_query_warehouses[0]::STRING AS WAREHOUSE_NAME,
+            USER_NAME,
             NULL AS QUERY_TAG,
-            NULL AS ROLE_NAME,
+            METADATA:role_name::STRING AS ROLE_NAME,
             'CORTEX_AGENT' AS FUNCTION_NAME,
             NULL AS MODEL_NAME,
-            NULL AS TOKENS,
-            SUM(CREDITS) AS CREDITS
+            SUM(TOKEN_CREDITS) AS CREDITS
         FROM SNOWFLAKE.ACCOUNT_USAGE.CORTEX_AGENT_USAGE_HISTORY
         WHERE START_TIME::DATE BETWEEN ? AND ?
-        GROUP BY 1, 2, 3
+        GROUP BY 1, 2, 3, 5
     """
     try:
         df = cached_query(conn, agent_sql, params, cache_key=("cortex_agent", start_date, end_date))
@@ -731,6 +780,74 @@ with c2:
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("No data for the selected period.")
+
+st.markdown("---")
+
+# --------------------------------------------------------------------------
+# Compute breakdown by service type (METERING_DAILY_HISTORY)
+# --------------------------------------------------------------------------
+st.subheader("⚙️ Compute breakdown by service type")
+
+show_service_breakdown = st.checkbox(
+    "Break down compute by service type",
+    value=False,
+    help="Sources SNOWFLAKE.ACCOUNT_USAGE.METERING_DAILY_HISTORY — includes warehouse "
+    "compute plus serverless features like Automatic Clustering, Search Optimization, "
+    "Materialized View maintenance, Query Acceleration, and Snowpipe.",
+)
+
+if show_service_breakdown:
+    service_df = raw_data.get("service_type", pd.DataFrame()).copy()
+
+    if service_df.empty:
+        st.info("No service-type usage data available for this period/account.")
+    else:
+        # Warehouse filter only applies to WAREHOUSE_METERING rows (the only
+        # service type attributable to a specific warehouse via NAME); other
+        # service types aren't warehouse-scoped, so they're left unfiltered.
+        if sel_warehouses:
+            is_wh_row = service_df["SERVICE_TYPE"] == "WAREHOUSE_METERING"
+            service_df = service_df[~is_wh_row | (is_wh_row & service_df["NAME"].isin(sel_warehouses))]
+
+        type_opts = sorted(service_df["SERVICE_TYPE"].dropna().unique().tolist())
+        selected_types = st.multiselect("Service types to include", type_opts, default=type_opts)
+        service_df = service_df[service_df["SERVICE_TYPE"].isin(selected_types)]
+
+        if service_df.empty:
+            st.info("No data for the selected service types.")
+        else:
+            service_df["COST_USD"] = service_df["CREDITS"] * pricing.credit_price
+
+            s1, s2 = st.columns([1, 1.4])
+            with s1:
+                pie_df = service_df.groupby("SERVICE_TYPE", as_index=False)["COST_USD"].sum()
+                fig = px.pie(pie_df, names="SERVICE_TYPE", values="COST_USD", hole=0.45)
+                fig.update_traces(textinfo="percent+label")
+                st.plotly_chart(fig, use_container_width=True)
+            with s2:
+                trend = service_df.groupby(["DATE", "SERVICE_TYPE"], as_index=False)["COST_USD"].sum()
+                fig = px.bar(trend, x="DATE", y="COST_USD", color="SERVICE_TYPE")
+                fig.update_layout(barmode="stack", xaxis_title=None, yaxis_title="Cost (USD)")
+                st.plotly_chart(fig, use_container_width=True)
+
+            table = (
+                service_df.groupby("SERVICE_TYPE", as_index=False)
+                .agg(CREDITS=("CREDITS", "sum"), COST_USD=("COST_USD", "sum"))
+                .sort_values("COST_USD", ascending=False)
+            )
+            st.dataframe(
+                table.rename(columns={"SERVICE_TYPE": "Service Type", "CREDITS": "Credits", "COST_USD": "Est. Cost ($)"}),
+                use_container_width=True,
+                hide_index=True,
+            )
+
+            st.caption(
+                "WAREHOUSE_METERING here reflects the same warehouse credits shown in the "
+                "\"Compute\" category above — this view exists to show what else besides "
+                "user-managed warehouses is contributing to compute-adjacent costs, since "
+                "serverless features like clustering and search optimization aren't captured "
+                "in the top-level Compute total or the Cost deep-dive section below."
+            )
 
 st.markdown("---")
 
