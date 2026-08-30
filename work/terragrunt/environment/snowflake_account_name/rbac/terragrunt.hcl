@@ -16,7 +16,7 @@ inputs = {
   account_roles = {
     "SYSADMIN" = {
       comment               = "Native Snowflake system administrator role"
-      granted_roles         = ["PRODUCER", "SECURITY_ADMIN_CUSTOM"]
+      granted_roles         = ["OWNER_ROLE", "SECURITY_ADMIN_CUSTOM"]
       granted_users         = []
       warehouse_privileges        = {}
       integration_privileges      = {}
@@ -36,14 +36,14 @@ inputs = {
       future_stage_privileges     = {}
     },
 
-    "PRODUCER" = {
+    "OWNER_ROLE" = {
       comment       = "Role for 3RACHA"
       granted_roles = []
-      granted_users = ["BANGCHAN"]
+      granted_users = ["MYUSER"]
 
-      warehouse_privileges   = { "PRODUCER_WH" = ["USAGE", "OPERATE", "MONITOR"] }
+      warehouse_privileges   = { "TEST_PROD_WH" = ["USAGE", "OPERATE", "MONITOR"] }
       integration_privileges = { "AWS_S3_DATA_LAKE" = ["USAGE"] }
-      database_privileges    = { "DB_STRAY_KIDS" = ["USAGE"] }
+      database_privileges    = { "DB_TEST_PRD" = ["USAGE"] }
 
       schema_privileges = {
         "DB_STRAY_KIDS.CHANS_LAPTOP" = ["OWNERSHIP", "USAGE"],
