@@ -41,12 +41,12 @@ inputs = {
       granted_roles = []
       granted_users = ["MYUSER"]
 
-      warehouse_privileges   = { "TEST_PROD_WH" = ["USAGE", "OPERATE", "MONITOR"] }
+      warehouse_privileges   = { "TEST_PRD_WH" = ["USAGE", "OPERATE", "MONITOR"] }
       integration_privileges = { "AWS_S3_DATA_LAKE" = ["USAGE"] }
       database_privileges    = { "DB_TEST_PRD" = ["USAGE"] }
 
       schema_privileges = {
-        "DB_STRAY_KIDS.CHANS_LAPTOP" = ["OWNERSHIP", "USAGE"],
+        "DB_TEST_PRD.INGEST_RAW" = ["OWNERSHIP", "USAGE"],
         "DB_STRAY_KIDS.COMEBACKS"    = ["USAGE", "MODIFY", "CREATE TABLE"],
       }
 
