@@ -37,7 +37,7 @@ inputs = {
     },
 
     "OWNER_ROLE" = {
-      comment       = "Role for 3RACHA"
+      comment       = "Role for DATA INGESTION"
       granted_roles = []
       granted_users = ["MYUSER"]
 
@@ -46,29 +46,29 @@ inputs = {
       database_privileges    = { "DB_TEST_PRD" = ["USAGE"] }
 
       schema_privileges = {
-        "DB_TEST_PRD.INGEST_RAW" = ["OWNERSHIP", "USAGE"],
-        "DB_STRAY_KIDS.COMEBACKS"    = ["USAGE", "MODIFY", "CREATE TABLE"],
+        "DB_TEST_PRD.INGEST_DATA" = ["OWNERSHIP", "USAGE"],
+        "DB_TEST_PRD.SHARE_READY"    = ["USAGE", "MODIFY", "CREATE TABLE"],
       }
 
-      all_table_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      all_view_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      all_procedure_privileges = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
-      all_function_privileges  = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
-      all_task_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["OWNERSHIP"] }
-      all_stage_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["READ", "WRITE"] }
+      all_table_privileges     = { "DB_TEST_PRD.SHARE_READY" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      all_view_privileges      = { "DB_TEST_PRD.SHARE_READY" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      all_procedure_privileges = { "DB_TEST_PRD.SHARE_READY" = ["USAGE"] }
+      all_function_privileges  = { "DB_TEST_PRD.SHARE_READY" = ["USAGE"] }
+      all_task_privileges      = { "DB_TEST_PRD.SHARE_READY" = ["OWNERSHIP"] }
+      all_stage_privileges     = { "DB_TEST_PRD.SHARE_READY" = ["READ", "WRITE"] }
 
-      future_table_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      future_view_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
-      future_procedure_privileges = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
-      future_function_privileges  = { "DB_STRAY_KIDS.COMEBACKS" = ["USAGE"] }
-      future_task_privileges      = { "DB_STRAY_KIDS.COMEBACKS" = ["OWNERSHIP"] }
-      future_stage_privileges     = { "DB_STRAY_KIDS.COMEBACKS" = ["READ", "WRITE"] }
+      future_table_privileges     = { "DB_TEST_PRD.SHARE_READY" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      future_view_privileges      = { "DB_TEST_PRD.SHARE_READY" = ["SELECT", "INSERT", "DELETE", "UPDATE"] }
+      future_procedure_privileges = { "DB_TEST_PRD.SHARE_READY" = ["USAGE"] }
+      future_function_privileges  = { "DB_TEST_PRD.SHARE_READY" = ["USAGE"] }
+      future_task_privileges      = { "DB_TEST_PRD.SHARE_READY" = ["OWNERSHIP"] }
+      future_stage_privileges     = { "DB_TEST_PRD.SHARE_READY" = ["READ", "WRITE"] }
     },
 
     "SECURITY_ADMIN_CUSTOM" = {
       comment       = "Custom operational role designed to monitor security metrics"
       granted_roles = ["SECURITYADMIN"]
-      granted_users = ["BANGCHAN"]
+      granted_users = ["MYUSER"]
       warehouse_privileges        = {}
       integration_privileges      = {}
       database_privileges         = {}
