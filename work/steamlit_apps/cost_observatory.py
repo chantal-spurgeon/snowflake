@@ -40,7 +40,7 @@ import streamlit as st
 # Page config
 # --------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Snowflake Cost Explorer",
+    page_title="Snowflake Cost Observatory",
     page_icon="❄️",
     layout="wide",
 )
@@ -51,6 +51,7 @@ CATEGORY_COLORS = {
     "AI Services": "#7D44CF",
     "Replication": "#F2A900",
     "Egress": "#E8586C",
+    "Other Serverless": "#5C9E31",
     "Cloud Services": "#8A8F98",
     "Other": "#B7BDC6",
 }
@@ -628,6 +629,33 @@ def build_category_costs(data, pricing: PricingConfig):
         daily["COST_USD"] = daily["UNITS"] * pricing.egress_price_per_gb
         frames.append(daily[["DATE", "CATEGORY", "UNITS", "COST_USD"]])
 
+    # Other serverless (from METERING_DAILY_HISTORY, SERVICE_TYPE breakdown).
+    # This is the only place that captures Automatic Clustering, Search
+    # Optimization, Materialized View maintenance, Query Acceleration,
+    # Snowpipe, and any other serverless feature Snowflake meters — none of
+    # which appear in WAREHOUSE_METERING_HISTORY at all. Excludes service
+    # types already counted via a more specific source above, to avoid
+    # double-counting: WAREHOUSE_METERING (-> Compute), REPLICATION
+    # (-> Replication), and AI_SERVICES/CORTEX_CODE_* (-> AI Services, via
+    # the dedicated Cortex views).
+    ALREADY_COUNTED_SERVICE_TYPES = {
+        "WAREHOUSE_METERING",
+        "WAREHOUSE_METERING_READER",
+        "REPLICATION",
+        "AI_SERVICES",
+        "CORTEX_CODE_CLI",
+        "CORTEX_CODE_SNOWSIGHT",
+        "CORTEX_CODE_DESKTOP",
+    }
+    service_type = data.get("service_type", pd.DataFrame()).copy()
+    if not service_type.empty:
+        other = service_type[~service_type["SERVICE_TYPE"].isin(ALREADY_COUNTED_SERVICE_TYPES)]
+        if not other.empty:
+            daily = other.groupby("DATE", as_index=False)["CREDITS"].sum()
+            daily["CATEGORY"] = "Other Serverless"
+            daily["COST_USD"] = daily["CREDITS"] * pricing.credit_price
+            frames.append(daily.rename(columns={"CREDITS": "UNITS"})[["DATE", "CATEGORY", "UNITS", "COST_USD"]])
+
     if not frames:
         return pd.DataFrame(columns=["DATE", "CATEGORY", "UNITS", "COST_USD"])
 
@@ -732,15 +760,34 @@ st.sidebar.markdown("---")
 today = dt.date.today()
 first_of_month = today.replace(day=1)
 
-date_range = st.sidebar.date_input(
-    "Date range",
-    value=(first_of_month, today),
-    max_value=today,
+DATE_PRESETS = {
+    "Month to date": (first_of_month, today),
+    "Last 30 days": (today - dt.timedelta(days=30), today),
+    "Last 90 days": (today - dt.timedelta(days=90), today),
+    "Last 365 days (max ACCOUNT_USAGE history)": (today - dt.timedelta(days=365), today),
+    "Custom range": None,
+}
+preset_label = st.sidebar.selectbox(
+    "Date range preset",
+    list(DATE_PRESETS.keys()),
+    help="ACCOUNT_USAGE views only retain ~365 days of history, so \"Last 365 days\" is "
+    "as close to full account lifetime as this app can show. Useful for reconciling "
+    "against Snowsight's lifetime/trial usage totals, which aren't limited to 365 days.",
 )
-if isinstance(date_range, tuple) and len(date_range) == 2:
-    start_date, end_date = date_range
+
+if DATE_PRESETS[preset_label] is not None:
+    start_date, end_date = DATE_PRESETS[preset_label]
+    st.sidebar.caption(f"{start_date:%b %d, %Y} – {end_date:%b %d, %Y}")
 else:
-    start_date, end_date = first_of_month, today
+    date_range = st.sidebar.date_input(
+        "Custom date range",
+        value=(first_of_month, today),
+        max_value=today,
+    )
+    if isinstance(date_range, tuple) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date, end_date = first_of_month, today
 
 # --------------------------------------------------------------------------
 # Load data
@@ -803,7 +850,7 @@ filtered_cortex_df = apply_cortex_filters(cortex_df, sel_warehouses, sel_tags, s
 # --------------------------------------------------------------------------
 # Header / KPIs
 # --------------------------------------------------------------------------
-st.title("Monthly Snowflake Cost Breakdown")
+st.title("Snowflake Cost Breakdown")
 st.caption(f"{start_date:%b %d, %Y} – {end_date:%b %d, %Y}")
 
 cost_df = build_category_costs(raw_data, pricing)
@@ -937,10 +984,10 @@ if show_service_breakdown:
 
             st.caption(
                 "WAREHOUSE_METERING here reflects the same warehouse credits shown in the "
-                "\"Compute\" category above — this view exists to show what else besides "
-                "user-managed warehouses is contributing to compute-adjacent costs, since "
-                "serverless features like clustering and search optimization aren't captured "
-                "in the top-level Compute total or the Cost deep-dive section below."
+                "\"Compute\" category above. The other service types shown here (clustering, "
+                "search optimization, Snowpipe, Cortex Code, etc.) are counted in the "
+                "top-level total under a separate \"Other Serverless\" category — this view "
+                "just lets you see that composition in detail."
             )
 
 st.markdown("---")
